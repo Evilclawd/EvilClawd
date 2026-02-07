@@ -16,6 +16,7 @@ dependencies = [
     "pydantic>=2.12.5",
     "pytest>=8.0.0",
     "pytest-asyncio>=0.23.0",
+    "python-telegram-bot[job-queue]>=22.0",
     "sqlalchemy[asyncio]>=2.0.46",
     "structlog>=25.5.0",
 ]

@@ -33,6 +33,9 @@ class Config(BaseModel):
     anthropic_api_key: str = Field(
         default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", "")
     )
+    telegram_bot_token: str = Field(
+        default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", "")
+    )
 
     # Database
     database_url: str = Field(default="sqlite+aiosqlite:///scanner.db")

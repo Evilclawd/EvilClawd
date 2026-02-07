@@ -56,6 +56,7 @@ class ScanResult(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
     session_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
     target_id: Mapped[str] = mapped_column(String(36), ForeignKey("targets.id"), nullable=False)
+    chat_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
     completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     findings: Mapped[str] = mapped_column(Text, nullable=False, default="[]")  # JSON array
@@ -152,6 +153,21 @@ class SessionCheckpoint(Base):
     __table_args__ = (
         Index("ix_checkpoint_session_thread", "session_id", "thread_id"),
     )
+
+
+class ScanQueue(Base):
+    """Database-backed scan queue for one-at-a-time enforcement."""
+    __tablename__ = "scan_queue"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    chat_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    target_url: Mapped[str] = mapped_column(String(2048), nullable=False)
+    command: Mapped[str] = mapped_column(String(50), nullable=False, default="full_pipeline")
+    session_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="queued")  # queued/running/completed/failed
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
 # Event listener to auto-compute hash before insert
