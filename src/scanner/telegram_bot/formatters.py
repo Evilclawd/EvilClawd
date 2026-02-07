@@ -17,8 +17,9 @@ def format_recon_summary(results: dict) -> str:
         HTML-formatted summary string
     """
     subdomain_count = len(results.get("subdomains", []))
-    port_count = sum(len(host.get("ports", [])) for host in results.get("port_scan", []))
-    tech_count = sum(len(t.get("technologies", [])) for t in results.get("technologies", []))
+    # port_scan is a flattened services list, each item is one port
+    port_count = sum(1 for svc in results.get("port_scan", []) if svc.get("state") == "open")
+    tech_count = len(results.get("technologies", []))
 
     return (
         f"<b>Recon Complete</b>\n"

@@ -53,11 +53,11 @@ class ScopeChecker:
         parsed = urlparse(target if "://" in target else f"https://{target}")
         hostname = parsed.hostname or target
 
-        # Query for matching authorized target
+        # Query for matching authorized target (use first() since multiple targets may match)
         result = await self.session.execute(
             select(Target).where(Target.url.contains(hostname))
         )
-        authorized_target = result.scalar_one_or_none()
+        authorized_target = result.scalars().first()
 
         if not authorized_target:
             return False, f"Target {hostname} not in authorized scope"

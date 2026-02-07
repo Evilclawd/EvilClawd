@@ -487,8 +487,9 @@ async def _run_scan_pipeline(bot, chat_id: int, target_url: str, session_id: str
 
         # Send recon status update
         subdomain_count = len(recon_results.get("subdomains", []))
+        # port_scan is a flattened services list, each item is one port
         port_count = sum(
-            len(host.get("ports", [])) for host in recon_results.get("port_scan", [])
+            1 for svc in recon_results.get("port_scan", []) if svc.get("state") == "open"
         )
         await bot.send_message(
             chat_id=chat_id,
@@ -506,6 +507,23 @@ async def _run_scan_pipeline(bot, chat_id: int, target_url: str, session_id: str
         # Step 2: Run vuln scan
         vuln_agent = VulnAgent(session_id=session_id)
         findings = await vuln_agent.scan(target_url, recon_results)
+
+        # Persist vuln findings to database so /exploit and /report can access them
+        if findings:
+            async with get_session() as session:
+                result = await session.execute(
+                    select(ScanResult).where(ScanResult.session_id == session_id)
+                )
+                scan_result = result.scalar_one_or_none()
+                if scan_result:
+                    existing_data = json.loads(scan_result.findings) if scan_result.findings else {}
+                    existing_data["vulnerabilities"] = [f.model_dump() for f in findings]
+                    await session.execute(
+                        update(ScanResult)
+                        .where(ScanResult.session_id == session_id)
+                        .values(findings=json.dumps(existing_data, default=str))
+                    )
+                    await session.commit()
 
         # Send vuln scan status update
         await bot.send_message(

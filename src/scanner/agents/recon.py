@@ -6,6 +6,7 @@ Includes scope enforcement, graceful degradation, checkpointing, and audit loggi
 
 import json
 from datetime import datetime, timezone
+from urllib.parse import urlparse
 from sqlalchemy import select, update
 import structlog
 
@@ -84,7 +85,7 @@ class ReconAgent(BaseAgent):
         """
         self.log.info("recon_start", target=target, ports=ports)
 
-        # Step 0: Scope check
+        # Step 0: Scope check (use original target for scope matching)
         async with get_session() as session:
             in_scope, reason = await is_in_scope(session, target)
 
@@ -100,12 +101,19 @@ class ReconAgent(BaseAgent):
                 self.log.error("scope_denied", target=target, reason=reason)
                 raise RuntimeError(error_msg)
 
-            # Get target_id for later persistence
+            # Get target_id for later persistence (use first() since multiple targets may match)
             result = await session.execute(
                 select(Target).where(Target.url.contains(target))
             )
-            target_obj = result.scalar_one_or_none()
+            target_obj = result.scalars().first()
             target_id = target_obj.id if target_obj else None
+
+        # Normalize target: extract hostname from URLs
+        # Tools expect bare hostnames (e.g., "hackthissite.org"), not full URLs
+        parsed = urlparse(target)
+        if parsed.scheme and parsed.hostname:
+            target = parsed.hostname
+            self.log.info("target_normalized", original=parsed.geturl(), hostname=target)
 
         # Check for resumption
         checkpoint_state = await self.restore()

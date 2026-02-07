@@ -20,12 +20,46 @@ AI-powered penetration testing assistant that combines LLM intelligence with bat
 
 | Tool | Purpose | Install |
 |------|---------|---------|
-| [subfinder](https://github.com/projectdiscovery/subfinder) | Subdomain enumeration | `go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
 | [nmap](https://nmap.org/) | Port scanning | `brew install nmap` / `apt install nmap` |
-| [whatweb](https://github.com/urbanadventurer/WhatWeb) | Technology fingerprinting | `brew install whatweb` / `gem install whatweb` |
-| [sqlmap](https://sqlmap.org/) | SQL injection testing | `pip install sqlmap` |
-| [xsser](https://github.com/epsylon/xsser) | XSS testing | `pip install xsser` |
-| [commix](https://github.com/commixproject/commix) | Command injection testing | `pip install commix` |
+| [subfinder](https://github.com/projectdiscovery/subfinder) | Subdomain enumeration | `brew install subfinder` / `go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest` |
+| [whatweb](https://github.com/urbanadventurer/WhatWeb) | Technology fingerprinting | Clone from GitHub (see below) |
+| [sqlmap](https://sqlmap.org/) | SQL injection testing | `pipx install sqlmap` |
+| [xsser](https://github.com/epsylon/xsser) | XSS testing | Clone from GitHub (see below) |
+| [commix](https://github.com/commixproject/commix) | Command injection testing | `pipx install commix` |
+
+**Quick install (macOS):**
+
+```bash
+# Homebrew packages
+brew install nmap subfinder
+
+# Python tools (via pipx to avoid system conflicts)
+brew install pipx
+pipx install sqlmap
+pipx install commix
+
+# Tools installed from source
+git clone https://github.com/urbanadventurer/WhatWeb.git ~/.local/share/whatweb
+ln -sf ~/.local/share/whatweb/whatweb ~/.local/bin/whatweb
+
+git clone https://github.com/epsylon/xsser-public.git ~/.local/share/xsser
+ln -sf ~/.local/share/xsser/xsser ~/.local/bin/xsser
+```
+
+**Quick install (Linux/Debian):**
+
+```bash
+sudo apt install nmap
+go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+pipx install sqlmap commix
+# whatweb and xsser: same git clone steps as macOS
+```
+
+Make sure `~/.local/bin` is on your PATH:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"  # Add to ~/.zshrc or ~/.bashrc
+```
 
 Tools are optional - EvilClawd gracefully reports which tools are missing and continues with what's available.
 
@@ -83,12 +117,44 @@ uv run evilclawd report <session-id> --html  # Also generate HTML
 uv run evilclawd status --session-id <session-id>
 ```
 
+### Telegram Bot
+
+Message a target URL directly to the bot and get back scan results.
+
+```bash
+# 1. Create a bot via @BotFather on Telegram (/newbot)
+# 2. Add the token to .env
+echo "TELEGRAM_BOT_TOKEN=your-token-here" >> .env
+
+# 3. Start the bot
+uv run python -c "
+from scanner.telegram_bot import create_bot_app
+import os
+from dotenv import load_dotenv
+load_dotenv()
+app = create_bot_app(os.environ['TELEGRAM_BOT_TOKEN'])
+app.run_polling()
+"
+```
+
+**Bot commands:**
+- Send any URL - runs full pipeline (recon + vuln scan)
+- `/scan <url>` - recon only
+- `/vulnscan <url>` - recon + vulnerability scan
+- `/exploit <session-id>` - guided exploitation with approval buttons
+- `/report <session-id>` - summary report
+- `/status <session-id>` - check scan progress
+- `/queue` - view scan queue
+
+Exploitation steps show blast radius and require inline button approval for moderate/destructive actions. Safe steps auto-execute. Unapproved steps auto-deny after 15 minutes.
+
 ## Architecture
 
 ```
 src/scanner/
   agents/          # AI-driven orchestration (ReconAgent, VulnAgent, ExploitAgent)
   cli/             # AsyncClick CLI interface
+  telegram_bot/    # Telegram interface (handlers, formatters, approval callbacks)
   core/
     llm/           # LLM abstraction layer (Claude, extensible to other providers)
     persistence/   # SQLite database, audit logging, checkpointing
@@ -112,7 +178,7 @@ src/scanner/
 uv run pytest tests/ -v
 ```
 
-All 137 tests use mocked tool outputs - no real security tools or network access needed.
+All 157 tests use mocked tool outputs - no real security tools or network access needed.
 
 ## Disclaimer
 
