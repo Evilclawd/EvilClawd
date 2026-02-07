@@ -1,0 +1,14 @@
+#### {{ finding.title }}
+
+**Severity:** {{ finding.severity | upper }} | **Confidence:** {{ finding.confidence | upper }}
+
+{{ finding.description }}
+
+{% if finding.evidence %}
+**Evidence:**
+
+{% for evidence in finding.evidence %}
+{{ format_evidence(evidence) }}
+
+{% endfor %}
+{% endif %}

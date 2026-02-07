@@ -1,0 +1,38 @@
+[project]
+name = "evilclawd"
+version = "0.1.0"
+description = "AI-powered penetration testing assistant with guided exploitation and evidence-validated reporting"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "aiohttp>=3.9.0",
+    "aiosqlite>=0.22.1",
+    "anthropic>=0.78.0",
+    "asyncclick>=8.3.0.7",
+    "cvss>=3.6",
+    "jinja2>=3.1.0",
+    "litellm>=1.81.8",
+    "markdown>=3.5.0",
+    "pydantic>=2.12.5",
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "sqlalchemy[asyncio]>=2.0.46",
+    "structlog>=25.5.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.scripts]
+evilclawd = "scanner.cli:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/scanner"]
