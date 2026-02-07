@@ -10,7 +10,7 @@ import asyncio
 from datetime import datetime, timezone
 
 import structlog
-from sqlalchemy import select, update
+from sqlalchemy import select, update as sa_update
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ContextTypes
 
@@ -89,7 +89,7 @@ async def approval_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Update approval status
         decision = "approved" if action == "approve" else "denied"
         await session.execute(
-            update(ApprovalRequest)
+            sa_update(ApprovalRequest)
             .where(ApprovalRequest.id == approval_id)
             .values(
                 status=decision,
@@ -195,7 +195,7 @@ async def approval_auto_deny_job(context: ContextTypes.DEFAULT_TYPE):
 
         # Auto-deny
         await session.execute(
-            update(ApprovalRequest)
+            sa_update(ApprovalRequest)
             .where(ApprovalRequest.id == approval_id)
             .values(
                 status="auto_denied",

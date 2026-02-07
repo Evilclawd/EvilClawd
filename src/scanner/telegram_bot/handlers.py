@@ -128,7 +128,10 @@ async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asyncio.create_task(
         _run_scan_pipeline(context.bot, chat_id, target_url, session_id, "scan")
     )
-    await update.message.reply_text(f"Starting recon scan on {html.escape(target_url)}...", parse_mode="HTML")
+    await update.message.reply_text(
+        f"Starting recon scan on {html.escape(target_url)}...\nSession: <code>{session_id}</code>",
+        parse_mode="HTML",
+    )
 
 
 async def vulnscan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -204,7 +207,9 @@ async def vulnscan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _run_scan_pipeline(context.bot, chat_id, target_url, session_id, "vulnscan")
     )
     msg = f"Starting vulnerability scan on {html.escape(target_url)}..." if target_url else f"Starting vulnerability scan for session {session_id}..."
-    await update.message.reply_text(msg, parse_mode="HTML")
+    await update.message.reply_text(
+        f"{msg}\nSession: <code>{session_id}</code>", parse_mode="HTML"
+    )
 
 
 async def exploit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -391,13 +396,12 @@ async def url_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle URL messages - trigger full pipeline."""
     await ensure_db()
 
-    # Extract URL from message
-    url_pattern = r"https?://\S+"
-    match = re.search(url_pattern, update.message.text)
-    if not match:
-        return
-
-    target_url = match.group(0)
+    # Extract URL from message - Telegram already detected it as a URL entity
+    text = update.message.text.strip()
+    if text.startswith(("http://", "https://")):
+        target_url = text
+    else:
+        target_url = f"https://{text}"
     chat_id = update.effective_chat.id
 
     # Check queue
@@ -449,7 +453,8 @@ async def url_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         _run_scan_pipeline(context.bot, chat_id, target_url, session_id, "full_pipeline")
     )
     await update.message.reply_text(
-        f"Starting scan on {html.escape(target_url)}...", parse_mode="HTML"
+        f"Starting scan on {html.escape(target_url)}...\nSession: <code>{session_id}</code>",
+        parse_mode="HTML",
     )
 
 

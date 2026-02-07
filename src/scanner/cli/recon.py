@@ -68,7 +68,7 @@ async def add_target(ctx, url: str, scope: tuple[str, ...], authorized_by: str):
         click.echo(f"[!] Target already exists: {url}")
     except Exception as e:
         click.echo(f"[-] Error adding target: {e}")
-        ctx.exit(1)
+        return
     finally:
         await engine.dispose()
 
@@ -105,10 +105,10 @@ async def scan(ctx, target: str, ports: str | None, session_id: str | None):
         except RuntimeError as e:
             click.echo(f"\n[-] Scope check failed: {e}")
             click.echo("[-] Use 'add-target' first to authorize this target")
-            ctx.exit(1)
+            return
         except Exception as e:
             click.echo(f"\n[-] Scan failed: {e}")
-            ctx.exit(1)
+            return
 
         # Print formatted results
         click.echo("\n" + "="*60)
@@ -205,7 +205,7 @@ async def status(ctx, session_id: str):
 
     except Exception as e:
         click.echo(f"[-] Error retrieving status: {e}")
-        ctx.exit(1)
+        return
     finally:
         await engine.dispose()
 
@@ -249,15 +249,15 @@ async def vuln_scan(ctx, target: str, session_id: str | None, skip_recon: bool):
             except RuntimeError as e:
                 click.echo(f"\n[-] Scope check failed: {e}")
                 click.echo("[-] Use 'add-target' first to authorize this target")
-                ctx.exit(1)
+                return
             except Exception as e:
                 click.echo(f"\n[-] Reconnaissance failed: {e}")
-                ctx.exit(1)
+                return
         else:
             # Load recon data from database
             if not session_id:
                 click.echo("[-] --skip-recon requires --session-id")
-                ctx.exit(1)
+                return
 
             click.echo("\n[*] Loading reconnaissance data from database...")
             from scanner.core.persistence.database import get_session
@@ -273,7 +273,7 @@ async def vuln_scan(ctx, target: str, session_id: str | None, skip_recon: bool):
             if not scan_result or not scan_result.findings:
                 click.echo(f"[-] No recon data found for session {session_id}")
                 click.echo("[-] Run without --skip-recon first")
-                ctx.exit(1)
+                return
 
             recon_results = json.loads(scan_result.findings)
             click.echo("[+] Loaded recon data from database")
@@ -288,10 +288,10 @@ async def vuln_scan(ctx, target: str, session_id: str | None, skip_recon: bool):
             findings = await vuln_agent.scan(target, recon_results)
         except RuntimeError as e:
             click.echo(f"\n[-] Scope check failed: {e}")
-            ctx.exit(1)
+            return
         except Exception as e:
             click.echo(f"\n[-] Vulnerability scan failed: {e}")
-            ctx.exit(1)
+            return
 
         # Step 3: Display findings summary
         click.echo("\n" + "="*60)
@@ -413,7 +413,7 @@ async def exploit(ctx, target: str, session_id: str):
         if not scan_result or not scan_result.findings:
             click.echo(f"[-] No findings found for session {session_id}")
             click.echo(f"[-] Run 'evilclawd vuln-scan {target}' first")
-            ctx.exit(1)
+            return
 
         findings_data = json.loads(scan_result.findings)
         vulnerabilities = findings_data.get("vulnerabilities", [])
@@ -438,7 +438,7 @@ async def exploit(ctx, target: str, session_id: str):
             exploit_results = await exploit_agent.execute(findings)
         except Exception as e:
             click.echo(f"\n[-] Exploitation failed: {e}")
-            ctx.exit(1)
+            return
 
         # Step 3: Display results
         click.echo("\n" + "="*60)
@@ -497,11 +497,11 @@ async def report(ctx, session_id: str, output: str | None, html: bool):
 
         if not scan_result:
             click.echo(f"[-] No results found for session {session_id}")
-            ctx.exit(1)
+            return
 
         if not scan_result.findings:
             click.echo(f"[-] No findings to report for session {session_id}")
-            ctx.exit(1)
+            return
 
         # Get target info
         async with get_session() as session:

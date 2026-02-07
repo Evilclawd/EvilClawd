@@ -75,7 +75,10 @@ class ReportGenerator:
             f for f in findings if self._has_tool_confirmed_evidence(f)
         ]
 
-        # Group validated findings by severity
+        # Deduplicate: group identical finding titles, collect affected hosts
+        grouped = self._group_findings(validated_findings)
+
+        # Group deduplicated findings by severity
         findings_by_severity = {
             "critical": [],
             "high": [],
@@ -84,26 +87,28 @@ class ReportGenerator:
             "info": [],
         }
 
-        for finding in validated_findings:
-            severity = finding.severity.lower()
+        for group in grouped:
+            severity = group["finding"].severity.lower()
             if severity in findings_by_severity:
-                findings_by_severity[severity].append(finding)
+                findings_by_severity[severity].append(group)
 
-        # Calculate metadata counts
+        # Calculate metadata counts (unique finding types, not raw duplicates)
+        unique_count = len(grouped)
         metadata = {
             "critical_count": len(findings_by_severity["critical"]),
             "high_count": len(findings_by_severity["high"]),
             "medium_count": len(findings_by_severity["medium"]),
             "low_count": len(findings_by_severity["low"]),
             "info_count": len(findings_by_severity["info"]),
-            "total_findings": len(validated_findings),
+            "total_findings": unique_count,
+            "total_instances": len(validated_findings),
         }
 
         # Generate executive summary
-        executive_summary = self._generate_executive_summary(validated_findings, target)
+        executive_summary = self._generate_executive_summary(grouped, target)
 
-        # Generate remediation guidance
-        remediation_guidance = self._generate_remediation(validated_findings)
+        # Generate remediation guidance (deduplicated)
+        remediation_guidance = self._generate_remediation(grouped)
 
         # Build template context
         context = {
@@ -120,6 +125,40 @@ class ReportGenerator:
         # Render main template
         template = self.env.get_template("pentest_report.md.j2")
         return template.render(**context)
+
+    def _group_findings(self, findings: list[Finding]) -> list[dict]:
+        """Group duplicate findings by title, collecting affected hosts.
+
+        Args:
+            findings: List of validated findings (may have duplicates across hosts)
+
+        Returns:
+            List of dicts with 'finding' (representative Finding) and 'hosts' (list of affected hosts)
+        """
+        groups: dict[str, dict] = {}
+
+        for finding in findings:
+            title = finding.title
+            # Extract host from evidence data
+            host = None
+            for evidence in finding.evidence:
+                if "url" in evidence.data:
+                    host = evidence.data["url"]
+                    break
+                if "target" in evidence.data:
+                    host = evidence.data["target"]
+                    break
+
+            if title not in groups:
+                groups[title] = {
+                    "finding": finding,
+                    "hosts": [],
+                }
+
+            if host and host not in groups[title]["hosts"]:
+                groups[title]["hosts"].append(host)
+
+        return list(groups.values())
 
     def _has_tool_confirmed_evidence(self, finding: Finding) -> bool:
         """Check if finding has at least one TOOL_CONFIRMED evidence item.
@@ -139,35 +178,36 @@ class ReportGenerator:
         )
 
     def _generate_executive_summary(
-        self, findings: list[Finding], target: str
+        self, groups: list[dict], target: str
     ) -> str:
-        """Generate executive summary paragraph from findings.
+        """Generate executive summary paragraph from grouped findings.
 
         Args:
-            findings: List of validated findings
+            groups: List of grouped finding dicts
             target: Target URL/IP
 
         Returns:
             Executive summary markdown string
         """
-        if not findings:
+        if not groups:
             return f"Automated security assessment of **{target}** completed with no significant findings."
 
-        # Count by severity
+        # Count unique finding types by severity
         severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
-        for finding in findings:
-            severity = finding.severity.lower()
+        total_instances = 0
+        for group in groups:
+            severity = group["finding"].severity.lower()
             if severity in severity_counts:
                 severity_counts[severity] += 1
+            total_instances += max(len(group["hosts"]), 1)
 
-        # Build summary text
-        total = len(findings)
+        total = len(groups)
         critical = severity_counts["critical"]
         high = severity_counts["high"]
         medium = severity_counts["medium"]
 
         summary_parts = [
-            f"Automated security assessment of **{target}** identified **{total}** findings."
+            f"Automated security assessment of **{target}** identified **{total} unique finding types** across {total_instances} instances."
         ]
 
         if critical > 0:
@@ -187,19 +227,19 @@ class ReportGenerator:
 
         return " ".join(summary_parts)
 
-    def _generate_remediation(self, findings: list[Finding]) -> list[dict]:
-        """Generate remediation guidance section from findings.
+    def _generate_remediation(self, groups: list[dict]) -> list[dict]:
+        """Generate remediation guidance section from grouped findings.
 
         Args:
-            findings: List of validated findings
+            groups: List of grouped finding dicts
 
         Returns:
             List of remediation dicts with finding_title, severity, recommendation, references
         """
         remediation_list = []
 
-        for finding in findings:
-            # Extract remediation info from finding
+        for group in groups:
+            finding = group["finding"]
             remediation = {
                 "finding_title": finding.title,
                 "severity": finding.severity.upper(),
