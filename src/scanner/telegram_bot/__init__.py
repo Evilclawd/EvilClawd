@@ -4,9 +4,10 @@ Provides:
 - Bot initialization with manual polling lifecycle
 - Command handlers for scan operations
 - HTML formatters for status messages
+- Inline keyboard callback handlers for approval workflow
 """
 
-from telegram.ext import Application, ApplicationBuilder
+from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler
 
 from .handlers import (
     start_handler,
@@ -18,6 +19,7 @@ from .handlers import (
     status_handler,
     queue_handler,
 )
+from .callbacks import approval_callback, continue_stop_callback
 
 
 def create_bot_app(token: str) -> Application:
@@ -41,6 +43,10 @@ def create_bot_app(token: str) -> Application:
     app.add_handler(report_handler)
     app.add_handler(status_handler)
     app.add_handler(queue_handler)
+
+    # Register callback query handlers for inline keyboards
+    app.add_handler(CallbackQueryHandler(approval_callback, pattern=r"^(approve|deny):\d+$"))
+    app.add_handler(CallbackQueryHandler(continue_stop_callback, pattern=r"^(continue|stop):.+$"))
 
     return app
 

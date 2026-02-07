@@ -170,6 +170,23 @@ class ScanQueue(Base):
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
 
+class ApprovalRequest(Base):
+    """Tracks pending approval requests for Telegram inline keyboards."""
+    __tablename__ = "approval_requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    session_id: Mapped[str] = mapped_column(String(36), index=True, nullable=False)
+    chat_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    step_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    risk_level: Mapped[str] = mapped_column(String(20), nullable=False)
+    blast_radius_text: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+
+
 # Event listener to auto-compute hash before insert
 @event.listens_for(AuditLog, "before_insert")
 def compute_audit_hash(mapper, connection, target):

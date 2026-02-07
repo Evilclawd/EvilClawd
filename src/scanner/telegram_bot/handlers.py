@@ -31,14 +31,17 @@ from scanner.core.persistence.database import (
     create_session_factory,
     get_session,
 )
-from scanner.core.persistence.models import ScanQueue, ScanResult, Target
+from scanner.core.persistence.models import ScanQueue, ScanResult, Target, ApprovalRequest
+from scanner.core.llm.tools import RiskLevel
 from .formatters import (
     format_recon_summary,
     format_vuln_summary,
     format_finding_brief,
     format_queue_status,
     format_pipeline_stage,
+    format_blast_radius,
 )
+from .callbacks import build_approval_keyboard, build_continue_stop_keyboard
 
 logger = structlog.get_logger()
 
@@ -205,9 +208,50 @@ async def vulnscan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def exploit_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle /exploit command - guided exploitation (Plan 02)."""
+    """Handle /exploit command - guided exploitation with inline keyboard approval."""
+    await ensure_db()
+
+    # Parse args: /exploit <session-id>
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /exploit &lt;session-id&gt;", parse_mode="HTML"
+        )
+        return
+
+    session_id = context.args[0]
+    chat_id = update.effective_chat.id
+
+    # Load findings from database
+    async with get_session() as session:
+        result = await session.execute(
+            select(ScanResult).where(ScanResult.session_id == session_id)
+        )
+        scan_result = result.scalar_one_or_none()
+
+    if not scan_result or not scan_result.findings:
+        await update.message.reply_text(
+            f"No findings found for session {html.escape(session_id)}", parse_mode="HTML"
+        )
+        return
+
+    findings_data = json.loads(scan_result.findings)
+    vulnerabilities = findings_data.get("vulnerabilities", [])
+
+    if not vulnerabilities:
+        await update.message.reply_text("No exploitable vulnerabilities found", parse_mode="HTML")
+        return
+
+    # Deserialize findings
+    findings = [Finding(**vuln_dict) for vuln_dict in vulnerabilities]
+
+    # Notify user exploitation is starting
     await update.message.reply_text(
-        "Exploitation requires approval workflow. Use CLI for now, or wait for inline approval setup."
+        f"Starting guided exploitation on {len(findings)} finding(s)...", parse_mode="HTML"
+    )
+
+    # Run exploitation in background
+    asyncio.create_task(
+        _run_exploit_chain(context, chat_id, session_id, findings)
     )
 
 
@@ -558,6 +602,247 @@ async def _process_next_in_queue(bot):
                 text=f"Starting queued scan on {html.escape(next_item.target_url)}...",
                 parse_mode="HTML",
             )
+
+
+async def _run_exploit_chain(context, chat_id: int, session_id: str, findings: list[Finding]):
+    """Run exploitation chain with inline keyboard approval workflow.
+
+    Args:
+        context: Bot context for callbacks and job queue
+        chat_id: Telegram chat ID
+        session_id: Session ID for this exploitation
+        findings: List of findings to exploit
+    """
+    try:
+        # Use ExploitAgent to generate chains
+        exploit_agent = ExploitAgent(session_id=session_id)
+
+        for finding in findings:
+            # Generate exploit chain
+            chain = await exploit_agent._suggest_chain(finding)
+
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text=f"<b>Exploit Chain for {html.escape(finding.title)}</b>\n"
+                     f"Objective: {html.escape(chain.objective)}\n"
+                     f"Steps: {len(chain.steps)}",
+                parse_mode="HTML",
+            )
+
+            # Execute chain step by step
+            for idx, step in enumerate(chain.steps, 1):
+                # Format blast radius message
+                step_dict = {
+                    "tool": step.tool_name,
+                    "risk_level": step.risk_level.value,
+                    "description": step.description,
+                    "blast_radius": step.blast_radius,
+                    "affected_systems": step.affected_systems,
+                    "reversible": step.reversible,
+                }
+                blast_radius_text = format_blast_radius(step_dict)
+
+                # SAFE steps auto-execute
+                if step.risk_level == RiskLevel.SAFE:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"<b>Step {idx}/{len(chain.steps)}</b> [AUTO-EXECUTE]\n\n{blast_radius_text}",
+                        parse_mode="HTML",
+                    )
+
+                    # Execute step (mock for now)
+                    result = await exploit_agent._mock_tool_execution(step)
+
+                    # Show result
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"✅ Step {idx} complete: {html.escape(result.get('status', 'success'))}",
+                        parse_mode="HTML",
+                    )
+                    continue
+
+                # MODERATE/DESTRUCTIVE require approval
+                async with get_session() as session:
+                    # Create approval request
+                    approval_request = ApprovalRequest(
+                        session_id=session_id,
+                        chat_id=chat_id,
+                        step_index=idx,
+                        tool_name=step.tool_name,
+                        risk_level=step.risk_level.value,
+                        blast_radius_text=blast_radius_text,
+                        status="pending",
+                    )
+                    session.add(approval_request)
+                    await session.commit()
+                    await session.refresh(approval_request)
+                    approval_id = approval_request.id
+
+                # Send approval request with inline keyboard
+                message = await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"<b>Step {idx}/{len(chain.steps)}</b> - APPROVAL REQUIRED\n\n{blast_radius_text}",
+                    reply_markup=build_approval_keyboard(approval_id),
+                    parse_mode="HTML",
+                )
+
+                # Store message_id in database
+                async with get_session() as session:
+                    await session.execute(
+                        update(ApprovalRequest)
+                        .where(ApprovalRequest.id == approval_id)
+                        .values(message_id=message.message_id)
+                    )
+                    await session.commit()
+
+                # Create event for this approval
+                approval_event = asyncio.Event()
+                context.bot_data[f"approval_event_{approval_id}"] = approval_event
+
+                # Schedule reminder (5 minutes)
+                context.job_queue.run_once(
+                    callback=lambda ctx: ctx.job.data["reminder_callback"](ctx),
+                    when=300,  # 5 minutes
+                    data={
+                        "approval_id": approval_id,
+                        "chat_id": chat_id,
+                        "reminder_callback": lambda ctx: _send_approval_reminder(ctx, approval_id, chat_id),
+                    },
+                    name=f"reminder_{approval_id}",
+                )
+
+                # Schedule auto-deny (15 minutes)
+                context.job_queue.run_once(
+                    callback=lambda ctx: ctx.job.data["auto_deny_callback"](ctx),
+                    when=900,  # 15 minutes
+                    data={
+                        "approval_id": approval_id,
+                        "chat_id": chat_id,
+                        "auto_deny_callback": lambda ctx: _auto_deny_approval(ctx, approval_id, chat_id, approval_event),
+                    },
+                    name=f"auto_deny_{approval_id}",
+                )
+
+                # Wait for user decision
+                await approval_event.wait()
+
+                # Get decision
+                decision = context.bot_data.get(f"approval_decision_{approval_id}", "denied")
+
+                # Cancel pending jobs
+                current_jobs = context.job_queue.get_jobs_by_name(f"reminder_{approval_id}")
+                for job in current_jobs:
+                    job.schedule_removal()
+                current_jobs = context.job_queue.get_jobs_by_name(f"auto_deny_{approval_id}")
+                for job in current_jobs:
+                    job.schedule_removal()
+
+                # Clean up bot_data
+                context.bot_data.pop(f"approval_event_{approval_id}", None)
+                context.bot_data.pop(f"approval_decision_{approval_id}", None)
+
+                # Handle denial
+                if decision in ("denied", "auto_denied"):
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"Step {idx} {decision}. Continue with remaining steps or stop?",
+                        reply_markup=build_continue_stop_keyboard(session_id),
+                        parse_mode="HTML",
+                    )
+
+                    # Wait for continue/stop decision
+                    continue_stop_event = asyncio.Event()
+                    context.bot_data[f"continue_stop_event_{session_id}"] = continue_stop_event
+
+                    await continue_stop_event.wait()
+
+                    action = context.bot_data.get(f"continue_stop_decision_{session_id}", "stop")
+                    context.bot_data.pop(f"continue_stop_event_{session_id}", None)
+                    context.bot_data.pop(f"continue_stop_decision_{session_id}", None)
+
+                    if action == "stop":
+                        await context.bot.send_message(
+                            chat_id=chat_id,
+                            text="Exploitation stopped by user",
+                            parse_mode="HTML",
+                        )
+                        return  # Stop entire exploitation
+
+                    # Continue to next step
+                    continue
+
+                # Execute approved step
+                result = await exploit_agent._mock_tool_execution(step)
+
+                await context.bot.send_message(
+                    chat_id=chat_id,
+                    text=f"✅ Step {idx} complete: {html.escape(result.get('status', 'success'))}",
+                    parse_mode="HTML",
+                )
+
+        # Exploitation complete
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Exploitation complete for session {html.escape(session_id)}",
+            parse_mode="HTML",
+        )
+
+    except Exception as e:
+        logger.error("exploit_chain_failed", error=str(e), session_id=session_id)
+        await context.bot.send_message(
+            chat_id=chat_id,
+            text=f"Exploitation failed: {html.escape(str(e))}",
+            parse_mode="HTML",
+        )
+
+
+async def _send_approval_reminder(context, approval_id: int, chat_id: int):
+    """Send reminder for pending approval."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+        )
+        approval_request = result.scalar_one_or_none()
+
+        if not approval_request or approval_request.status != "pending":
+            return  # Already resolved
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"⏰ Reminder: Approval request #{approval_id} still pending (auto-deny in 10 minutes)",
+    )
+
+
+async def _auto_deny_approval(context, approval_id: int, chat_id: int, event: asyncio.Event):
+    """Auto-deny approval after timeout."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(ApprovalRequest).where(ApprovalRequest.id == approval_id)
+        )
+        approval_request = result.scalar_one_or_none()
+
+        if not approval_request or approval_request.status != "pending":
+            return  # Already resolved
+
+        # Auto-deny
+        await session.execute(
+            update(ApprovalRequest)
+            .where(ApprovalRequest.id == approval_id)
+            .values(
+                status="auto_denied",
+                resolved_at=datetime.now(timezone.utc)
+            )
+        )
+        await session.commit()
+
+    await context.bot.send_message(
+        chat_id=chat_id,
+        text=f"⏱ Auto-denied approval request #{approval_id} (15 minute timeout)",
+    )
+
+    # Set event to unblock
+    context.bot_data[f"approval_decision_{approval_id}"] = "auto_denied"
+    event.set()
 
 
 # Handler registrations
