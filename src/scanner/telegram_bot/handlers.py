@@ -61,8 +61,41 @@ async def ensure_db():
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle /start command."""
     await update.message.reply_text(
-        "EvilClawd ready. Send a target URL or use /scan, /vulnscan, /exploit, /report."
+        "EvilClawd ready. Send a target URL to start scanning, or use /help for commands."
     )
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /help command - show available commands and tools."""
+    help_text = (
+        "<b>EvilClawd - AI Pentesting Assistant</b>\n\n"
+        "<b>Quick Start:</b>\n"
+        "Send any URL to run a full scan (recon + vuln scan).\n\n"
+        "<b>Commands:</b>\n"
+        "/scan &lt;url&gt; — Recon only (subdomains, ports, technologies)\n"
+        "/vulnscan &lt;url&gt; — Recon + vulnerability scan\n"
+        "/exploit &lt;session-id&gt; — Guided exploitation with approval\n"
+        "/report &lt;session-id&gt; — View scan summary\n"
+        "/status &lt;session-id&gt; — Check scan progress\n"
+        "/queue — View scan queue\n"
+        "/help — This message\n\n"
+        "<b>Tools Used:</b>\n"
+        "• <b>subfinder</b> — Subdomain enumeration\n"
+        "• <b>nmap</b> — Port scanning &amp; service detection\n"
+        "• <b>whatweb</b> — Technology fingerprinting\n"
+        "• <b>sqlmap</b> — SQL injection testing\n"
+        "• <b>xsser</b> — Cross-site scripting (XSS) testing\n"
+        "• <b>commix</b> — Command injection testing\n"
+        "• <b>headers</b> — Security header analysis\n\n"
+        "<b>How It Works:</b>\n"
+        "1. Send a URL → recon runs automatically\n"
+        "2. Vuln scan tests for SQLi, XSS, CMDi, and header issues\n"
+        "3. Exploitation shows blast radius and asks for approval\n"
+        "4. Safe steps auto-execute, risky steps need your OK\n"
+        "5. Use /report to get findings summary\n\n"
+        "<i>Only scan targets you have authorization to test.</i>"
+    )
+    await update.message.reply_text(help_text, parse_mode="HTML")
 
 
 async def scan_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -870,6 +903,7 @@ async def _auto_deny_approval(context, approval_id: int, chat_id: int, event: as
 
 # Handler registrations
 start_handler = CommandHandler("start", start_command)
+help_handler = CommandHandler("help", help_command)
 scan_handler = CommandHandler("scan", scan_command)
 vulnscan_handler = CommandHandler("vulnscan", vulnscan_command)
 exploit_handler = CommandHandler("exploit", exploit_command)

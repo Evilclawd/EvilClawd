@@ -11,6 +11,7 @@ from telegram.ext import Application, ApplicationBuilder, CallbackQueryHandler
 
 from .handlers import (
     start_handler,
+    help_handler,
     url_handler,
     scan_handler,
     vulnscan_handler,
@@ -36,6 +37,7 @@ def create_bot_app(token: str) -> Application:
 
     # Register all command and message handlers
     app.add_handler(start_handler)
+    app.add_handler(help_handler)
     app.add_handler(url_handler)
     app.add_handler(scan_handler)
     app.add_handler(vulnscan_handler)
