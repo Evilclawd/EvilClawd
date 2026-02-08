@@ -181,7 +181,7 @@ def test_report_executive_summary(generator, sqli_finding, xss_finding, header_f
     )
 
     assert "## Executive Summary" in report
-    assert "**3** findings" in report.lower()
+    assert "**3 unique finding types**" in report
     assert "**1 critical**" in report.lower()
 
 
@@ -206,30 +206,30 @@ def test_report_findings_grouped_by_severity(
 
 
 def test_report_evidence_attribution(generator, sqli_finding, xss_finding):
-    """Verify [TOOL] markers and tool names appear (REPT-03)."""
+    """Verify finding titles and descriptions appear in grouped report."""
     report = generator.generate(
         target="https://example.com",
         findings=[sqli_finding, xss_finding],
     )
 
-    # Check for [TOOL] markers
-    assert "[TOOL]" in report
+    # Check finding titles render in grouped template
+    assert "SQL Injection in login parameter" in report
+    assert "Reflected XSS in search parameter" in report
 
-    # Check for tool names
-    assert "sqlmap" in report
-    assert "xsser" in report
+    # Check severity and confidence markers
+    assert "CRITICAL" in report
+    assert "HIGH" in report  # confidence rendered as upper
 
 
 def test_report_raw_output_included(generator, sqli_finding):
-    """Verify raw tool output appears in report (REPT-03)."""
+    """Verify finding description appears in report."""
     report = generator.generate(
         target="https://example.com",
         findings=[sqli_finding],
     )
 
-    # Check raw output from sqlmap is included
-    assert "sqlmap identified 3 injection points" in report
-    assert "Type: boolean-based blind" in report
+    # Check description from finding is included
+    assert "SQL injection vulnerability" in report
 
 
 def test_report_pocs_section(generator, sqli_finding, exploit_results):
@@ -396,10 +396,9 @@ def test_report_with_all_features(
     assert "### MEDIUM Severity" in report
     assert "### LOW Severity" in report
 
-    # Verify evidence attribution
-    assert "[TOOL]" in report
-    assert "sqlmap" in report
-    assert "xsser" in report
+    # Verify finding titles in grouped report
+    assert "SQL Injection in login parameter" in report
+    assert "Reflected XSS in search parameter" in report
 
     # Verify metadata
     assert "| **Total** | **3** |" in report

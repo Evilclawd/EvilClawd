@@ -6,6 +6,7 @@ Implements all command handlers for the bot:
 - /vulnscan - Recon + vulnerability scan
 - /exploit - Guided exploitation
 - /report - Generate report
+- /analyze - LLM-powered offensive/defensive analysis
 - /status - Check scan status
 - /queue - Show scan queue
 - URL detection - Full pipeline on bare URLs
@@ -76,6 +77,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/vulnscan &lt;url&gt; — Recon + vulnerability scan\n"
         "/exploit &lt;session-id&gt; — Guided exploitation with approval\n"
         "/report &lt;session-id&gt; — View scan summary\n"
+        "/analyze &lt;session-id&gt; — AI offensive/defensive analysis\n"
         "/status &lt;session-id&gt; — Check scan progress\n"
         "/queue — View scan queue\n"
         "/help — This message\n\n"
@@ -92,7 +94,8 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "2. Vuln scan tests for SQLi, XSS, CMDi, and header issues\n"
         "3. Exploitation shows blast radius and asks for approval\n"
         "4. Safe steps auto-execute, risky steps need your OK\n"
-        "5. Use /report to get findings summary\n\n"
+        "5. Use /report to get findings summary\n"
+        "6. Use /analyze for AI attack scenarios &amp; remediation\n\n"
         "<i>Only scan targets you have authorization to test.</i>"
     )
     await update.message.reply_text(help_text, parse_mode="HTML")
@@ -352,6 +355,93 @@ async def report_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     lines.append(f"\n<i>Use CLI 'evilclawd report {session_id}' for full report</i>")
 
     await update.message.reply_text("\n".join(lines), parse_mode="HTML")
+
+
+async def analyze_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle /analyze command - LLM-powered offensive/defensive analysis."""
+    await ensure_db()
+
+    if not context.args:
+        await update.message.reply_text(
+            "Usage: /analyze &lt;session-id&gt;", parse_mode="HTML"
+        )
+        return
+
+    session_id = context.args[0]
+
+    # Load findings and target URL from database
+    async with get_session() as session:
+        result = await session.execute(
+            select(ScanResult).where(ScanResult.session_id == session_id)
+        )
+        scan_result = result.scalar_one_or_none()
+
+        if not scan_result or not scan_result.findings:
+            await update.message.reply_text(
+                f"No findings found for session {html.escape(session_id)}", parse_mode="HTML"
+            )
+            return
+
+        # Get target URL from targets table
+        target_result = await session.execute(
+            select(Target).where(Target.id == scan_result.target_id)
+        )
+        target_obj = target_result.scalar_one_or_none()
+        target_url = target_obj.url if target_obj else session_id
+
+    findings_data = json.loads(scan_result.findings)
+    vulnerabilities = findings_data.get("vulnerabilities", [])
+
+    if not vulnerabilities:
+        await update.message.reply_text("No vulnerabilities to analyze", parse_mode="HTML")
+        return
+
+    # Deserialize findings
+    findings = [Finding(**vuln_dict) for vuln_dict in vulnerabilities]
+
+    # Get recon summary if available
+    attack_surface = findings_data.get("attack_surface", {})
+    recon_summary = attack_surface.get("summary", None)
+
+    await update.message.reply_text(
+        "Generating AI analysis... this may take a moment.",
+        parse_mode="HTML",
+    )
+
+    # Run analysis
+    from scanner.core.reporting.generator import ReportGenerator
+
+    generator = ReportGenerator()
+    try:
+        analysis = await generator.analyze(
+            target=target_url,
+            findings=findings,
+            recon_summary=recon_summary,
+        )
+    except Exception as e:
+        await update.message.reply_text(
+            f"Analysis failed: {html.escape(str(e))}", parse_mode="HTML"
+        )
+        return
+
+    # Telegram has a 4096 char limit per message — split if needed
+    if len(analysis) <= 4000:
+        await update.message.reply_text(analysis)
+    else:
+        # Split into chunks at paragraph boundaries
+        chunks = []
+        current = ""
+        for line in analysis.split("\n"):
+            if len(current) + len(line) + 1 > 4000:
+                chunks.append(current)
+                current = line
+            else:
+                current = current + "\n" + line if current else line
+        if current:
+            chunks.append(current)
+
+        for chunk in chunks:
+            await update.message.reply_text(chunk)
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -908,6 +998,7 @@ scan_handler = CommandHandler("scan", scan_command)
 vulnscan_handler = CommandHandler("vulnscan", vulnscan_command)
 exploit_handler = CommandHandler("exploit", exploit_command)
 report_handler = CommandHandler("report", report_command)
+analyze_handler = CommandHandler("analyze", analyze_command)
 status_handler = CommandHandler("status", status_command)
 queue_handler = CommandHandler("queue", queue_command)
 url_handler = MessageHandler(filters.Entity("url"), url_message)

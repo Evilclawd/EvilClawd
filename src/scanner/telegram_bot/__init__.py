@@ -17,6 +17,7 @@ from .handlers import (
     vulnscan_handler,
     exploit_handler,
     report_handler,
+    analyze_handler,
     status_handler,
     queue_handler,
 )
@@ -43,6 +44,7 @@ def create_bot_app(token: str) -> Application:
     app.add_handler(vulnscan_handler)
     app.add_handler(exploit_handler)
     app.add_handler(report_handler)
+    app.add_handler(analyze_handler)
     app.add_handler(status_handler)
     app.add_handler(queue_handler)
 

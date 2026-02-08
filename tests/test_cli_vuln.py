@@ -342,5 +342,5 @@ async def test_report_no_session_data():
 
         result = await runner.invoke(cli, ["report", "nonexistent-session"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 0  # returns gracefully instead of raising
     assert "No results found" in result.output

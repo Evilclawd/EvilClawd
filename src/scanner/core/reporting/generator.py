@@ -4,12 +4,16 @@ Produces structured markdown pentest reports from findings and exploit results,
 with evidence validation, severity grouping, and source attribution.
 """
 
+import os
 from datetime import datetime
 from pathlib import Path
 
+import structlog
 from jinja2 import Environment, FileSystemLoader
 
 from scanner.core.output import Evidence, Finding, SourceType
+
+logger = structlog.get_logger()
 
 
 class ReportGenerator:
@@ -389,3 +393,90 @@ class ReportGenerator:
                 lines.append(f"  - **{key}:** {value}")
 
         return "\n".join(lines)
+
+    async def analyze(
+        self,
+        target: str,
+        findings: list[Finding],
+        recon_summary: dict | None = None,
+    ) -> str:
+        """Generate LLM-powered offensive/defensive analysis of findings.
+
+        Uses Claude to explain each finding in plain language with attack
+        scenarios and specific remediation steps.
+
+        Args:
+            target: Target URL or domain
+            findings: List of Finding objects
+            recon_summary: Optional recon data for context
+
+        Returns:
+            Markdown analysis string
+        """
+        from scanner.core.llm.anthropic_provider import AnthropicProvider
+
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            return "LLM analysis unavailable: ANTHROPIC_API_KEY not set. Add it to your .env file."
+
+        # Filter and group findings
+        validated = [f for f in findings if self._has_tool_confirmed_evidence(f)]
+        groups = self._group_findings(validated)
+
+        if not groups:
+            return f"No tool-confirmed findings to analyze for {target}."
+
+        # Build findings summary for the prompt
+        findings_text = []
+        for group in groups:
+            hosts = ", ".join(group["hosts"][:5])
+            if len(group["hosts"]) > 5:
+                hosts += f" (+{len(group['hosts']) - 5} more)"
+            findings_text.append(
+                f"- {group['finding'].title} ({group['finding'].severity.upper()}) "
+                f"— {len(group['hosts'])} hosts: {hosts}\n"
+                f"  Description: {group['finding'].description}"
+            )
+
+        recon_context = ""
+        if recon_summary:
+            recon_context = (
+                f"\nRecon data: {recon_summary.get('total_subdomains', 0)} subdomains, "
+                f"{recon_summary.get('total_open_ports', 0)} open ports, "
+                f"{recon_summary.get('total_technologies', 0)} technologies detected."
+            )
+
+        prompt = f"""You are an expert penetration tester writing an analysis report for {target}.{recon_context}
+
+Here are the deduplicated findings from automated scanning:
+
+{chr(10).join(findings_text)}
+
+For each finding, provide:
+1. **What this means** — plain language explanation
+2. **Attack scenario** — how a white-hat attacker would exploit this (be specific)
+3. **Fix** — specific remediation with config examples (nginx/apache where relevant)
+4. **Priority** — relative importance compared to other findings
+
+Then add a brief **Overall Assessment** section at the end summarizing the target's security posture and what to fix first.
+
+Format as clean markdown. Be concise but specific. Use code blocks for config examples."""
+
+        try:
+            provider = AnthropicProvider(api_key=api_key, model="claude-sonnet-4-5-20250929")
+            response = await provider.complete(
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            # Extract text from response
+            analysis = ""
+            for block in response.get("content", []):
+                if block.get("text"):
+                    analysis += block["text"]
+
+            logger.info("llm_analysis_complete", target=target, findings=len(groups))
+            return analysis
+
+        except Exception as e:
+            logger.error("llm_analysis_failed", error=str(e))
+            return f"LLM analysis failed: {e}"

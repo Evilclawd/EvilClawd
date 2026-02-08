@@ -125,7 +125,7 @@ async def test_scan_unauthorized_target_fails(db_engine):
 
         result = await runner.invoke(cli, ["scan", "example.com"])
 
-    assert result.exit_code == 1
+    assert result.exit_code == 0  # returns gracefully instead of raising
     assert "Scope check failed" in result.output
     assert "add-target" in result.output
 

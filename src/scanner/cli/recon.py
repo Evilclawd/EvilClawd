@@ -9,6 +9,7 @@ Provides user-facing commands:
 import asyncclick as click
 import json
 import structlog
+from datetime import datetime
 from uuid import uuid4
 from sqlalchemy.exc import IntegrityError
 
@@ -560,6 +561,102 @@ async def report(ctx, session_id: str, output: str | None, html: bool):
             click.echo(f"[+] HTML report generated: {html_path}")
 
         click.echo("\n[+] Report generation complete")
+
+    finally:
+        await engine.dispose()
+
+
+@cli.command()
+@click.argument("session_id")
+@click.option("-o", "--output", default=None, help="Output file path")
+@click.pass_context
+async def analyze(ctx, session_id: str, output: str | None):
+    """AI-powered analysis of scan findings.
+
+    Uses Claude to explain each finding with attack scenarios,
+    specific remediation steps, and priority ranking.
+
+    Examples:
+        evilclawd analyze abc123
+        evilclawd analyze abc123 -o analysis.md
+    """
+    engine = await init_db()
+
+    try:
+        click.echo("[*] EvilClawd AI Analysis")
+        click.echo(f"[*] Session: {session_id}")
+
+        # Load scan data
+        click.echo("\n[*] Loading scan data...")
+        from scanner.core.persistence.database import get_session
+        from scanner.core.persistence.models import ScanResult, Target
+        from sqlalchemy import select
+
+        async with get_session() as session:
+            result = await session.execute(
+                select(ScanResult).where(ScanResult.session_id == session_id)
+            )
+            scan_result = result.scalar_one_or_none()
+
+        if not scan_result or not scan_result.findings:
+            click.echo(f"[-] No findings found for session {session_id}")
+            return
+
+        async with get_session() as session:
+            result = await session.execute(
+                select(Target).where(Target.id == scan_result.target_id)
+            )
+            target = result.scalar_one_or_none()
+
+        target_url = target.url if target else "Unknown"
+
+        findings_data = json.loads(scan_result.findings)
+        vulnerabilities = findings_data.get("vulnerabilities", [])
+
+        if not vulnerabilities:
+            click.echo("[-] No vulnerabilities to analyze")
+            return
+
+        from scanner.core.output import Finding
+        findings = [Finding(**vuln_dict) for vuln_dict in vulnerabilities]
+        click.echo(f"[+] Loaded {len(findings)} findings")
+
+        # Extract recon summary
+        recon_summary = None
+        attack_surface = findings_data.get("attack_surface", {})
+        if attack_surface:
+            recon_summary = attack_surface.get("summary", {})
+
+        # Run LLM analysis
+        click.echo("\n[*] Analyzing findings with AI (this may take a moment)...")
+        from scanner.core.reporting.generator import ReportGenerator
+
+        generator = ReportGenerator()
+        analysis = await generator.analyze(
+            target=target_url,
+            findings=findings,
+            recon_summary=recon_summary,
+        )
+
+        # Write to file
+        if output is None:
+            output = f"analysis-{session_id}.md"
+
+        header = (
+            f"# Security Analysis: {target_url}\n\n"
+            f"**Session:** {session_id}\n"
+            f"**Date:** {datetime.utcnow().strftime('%Y-%m-%d')}\n"
+            f"**Powered by:** EvilClawd + Claude AI\n\n---\n\n"
+        )
+
+        with open(output, "w") as f:
+            f.write(header + analysis)
+
+        click.echo(f"\n[+] Analysis written to: {output}")
+
+        # Also print to terminal
+        click.echo("\n" + "=" * 60)
+        click.echo(analysis)
 
     finally:
         await engine.dispose()
